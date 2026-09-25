@@ -7,8 +7,6 @@ import { MetadataField } from "../../../slices/eventSlice";
 import ButtonLikeAnchor from "../ButtonLikeAnchor";
 import { LuCheck, LuSquarePen, LuX } from "react-icons/lu";
 
-const childRef = React.createRef<HTMLDivElement>();
-
 /**
  * This component renders an editable field for multiple values depending on the type of the corresponding metadata
  */
@@ -25,6 +23,8 @@ const RenderMultiField = ({
 	form: FieldProps["form"]
 	showCheck?: boolean,
 }) => {
+	// One ref per rendered field
+	const childRef = useRef<HTMLDivElement>(null);
 	// Indicator if currently edit mode is activated
 	const { editMode, setEditMode } = useClickOutsideField(childRef);
 	// Temporary storage for value user currently types in
@@ -44,6 +44,13 @@ const RenderMultiField = ({
 			event.preventDefault();
 
 			submitValue();
+		}
+
+		// Backspace on an empty input drops the last value.
+		if (event.key === "Backspace" && inputValue === "" && fieldValue.length > 0) {
+			event.preventDefault();
+
+			removeItem(fieldValue.length - 1);
 		}
 	};
 
@@ -93,6 +100,17 @@ const RenderMultiField = ({
 		form.setFieldValue(field.name, fieldValue);
 	};
 
+	// Always points at the latest submitValue, so late callers (e.g. unmount
+	// cleanup) don't commit against a stale field value.
+	const submitValueRef = useRef(submitValue);
+	submitValueRef.current = submitValue;
+
+	// Commit the typed value and leave edit mode (keyboard exit).
+	const leaveEditMode = (typedValue: string) => {
+		submitValueRef.current(typedValue);
+		setEditMode(false);
+	};
+
 	return (
 		// Render editable field for multiple values depending on type of metadata field
 		// (types: see metadata.json retrieved from backend)
@@ -100,6 +118,7 @@ const RenderMultiField = ({
 			<>
 				{fieldInfo.type === "mixed_text" && (
 					<EditMultiSelect
+						containerRef={childRef}
 						collection={fieldInfo.collection ? fieldInfo.collection : []}
 						field={field}
 						fieldValue={fieldValue}
@@ -107,7 +126,9 @@ const RenderMultiField = ({
 						removeItem={removeItem}
 						handleChange={handleChange}
 						handleKeyDown={handleKeyDown}
-						handleBlur={submitValue}
+						// Route through the ref, not submitValue directly
+						handleBlur={input => submitValueRef.current(input)}
+						handleLeave={leaveEditMode}
 					/>
 				)}
 			</>
@@ -128,19 +149,23 @@ const RenderMultiField = ({
 
 // Renders multi select
 const EditMultiSelect = ({
+	containerRef,
 	collection,
 	handleKeyDown,
 	handleChange,
 	handleBlur,
+	handleLeave,
 	inputValue,
 	removeItem,
 	field,
 	fieldValue,
 }: {
+	containerRef: React.RefObject<HTMLDivElement | null>
 	collection: { [key: string]: unknown }[]
 	handleKeyDown: (event: React.KeyboardEvent) => void
 	handleChange: (event: React.ChangeEvent<HTMLInputElement>) => void
 	handleBlur: (refCurrent: string) => void
+	handleLeave: (typedValue: string) => void
 	inputValue: HTMLInputElement["value"]
 	removeItem: (key: number) => void
 	field: FieldProps["field"]
@@ -154,14 +179,39 @@ const EditMultiSelect = ({
 	React.useEffect(() => {
 		textRef.current = inputValue;
 	}, [inputValue]);
+	// Pending deferred blur handling, see onBlur below.
+	const blurTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
 	React.useEffect(() => {
-		return () => handleBlur(textRef.current);
+		return () => {
+			clearTimeout(blurTimeout.current);
+			handleBlur(textRef.current);
+		};
 	// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	return (
 		<>
-			<div ref={childRef}>
+			<div
+				ref={containerRef}
+				// Handle leaving the field via keyboard navigation.
+				onBlur={e => {
+					// Tabbing out: commit the typed value and leave edit mode. Clicks
+					// are handled by useClickOutsideField instead.
+					const leavingField = !!e.relatedTarget && !e.currentTarget.contains(e.relatedTarget);
+					const typedValue = inputValue;
+
+					// Defer until the browser has finished moving focus; re-rendering
+					// mid-transfer would otherwise lose focus entirely.
+					clearTimeout(blurTimeout.current);
+					blurTimeout.current = setTimeout(() => {
+						if (leavingField) {
+							handleLeave(typedValue);
+						} else {
+							handleBlur(typedValue);
+						}
+					});
+				}}
+			>
 				<div>
 					<input
 						type="text"
@@ -187,6 +237,9 @@ const EditMultiSelect = ({
 						<span className="multi-value" key={key}>
 							{item}
 							<ButtonLikeAnchor
+								// Keep out of the tab order so Tab goes to the next field
+								// (Backspace still removes values via keyboard).
+								tabIndex={-1}
 								onClick={() => removeItem(key)}
 							>
 								<LuX />
