@@ -45,13 +45,6 @@ const RenderMultiField = ({
 
 			submitValue();
 		}
-
-		// Backspace on an empty input drops the last value.
-		if (event.key === "Backspace" && inputValue === "" && fieldValue.length > 0) {
-			event.preventDefault();
-
-			removeItem(fieldValue.length - 1);
-		}
 	};
 
 	const submitValue = (alternativeInput?: string) => {
@@ -128,7 +121,7 @@ const RenderMultiField = ({
 						handleKeyDown={handleKeyDown}
 						// Route through the ref, not submitValue directly
 						handleBlur={input => submitValueRef.current(input)}
-						handleLeave={leaveEditMode}
+						handleFocusLeaveField={leaveEditMode}
 					/>
 				)}
 			</>
@@ -154,7 +147,7 @@ const EditMultiSelect = ({
 	handleKeyDown,
 	handleChange,
 	handleBlur,
-	handleLeave,
+	handleFocusLeaveField,
 	inputValue,
 	removeItem,
 	field,
@@ -165,7 +158,7 @@ const EditMultiSelect = ({
 	handleKeyDown: (event: React.KeyboardEvent) => void
 	handleChange: (event: React.ChangeEvent<HTMLInputElement>) => void
 	handleBlur: (refCurrent: string) => void
-	handleLeave: (typedValue: string) => void
+	handleFocusLeaveField: (typedValue: string) => void
 	inputValue: HTMLInputElement["value"]
 	removeItem: (key: number) => void
 	field: FieldProps["field"]
@@ -179,11 +172,11 @@ const EditMultiSelect = ({
 	React.useEffect(() => {
 		textRef.current = inputValue;
 	}, [inputValue]);
-	// Pending deferred blur handling, see onBlur below.
-	const blurTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+	const inputRef = useRef<HTMLInputElement>(null);
+	const leaveTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
 	React.useEffect(() => {
 		return () => {
-			clearTimeout(blurTimeout.current);
+			clearTimeout(leaveTimeout.current);
 			handleBlur(textRef.current);
 		};
 	// eslint-disable-next-line react-hooks/exhaustive-deps
@@ -193,27 +186,21 @@ const EditMultiSelect = ({
 		<>
 			<div
 				ref={containerRef}
-				// Handle leaving the field via keyboard navigation.
+				// Tabbing out: commit the typed value and leave edit mode. Clicks
+				// are handled by useClickOutsideField instead.
 				onBlur={e => {
-					// Tabbing out: commit the typed value and leave edit mode. Clicks
-					// are handled by useClickOutsideField instead.
-					const leavingField = !!e.relatedTarget && !e.currentTarget.contains(e.relatedTarget);
-					const typedValue = inputValue;
-
-					// Defer until the browser has finished moving focus; re-rendering
-					// mid-transfer would otherwise lose focus entirely.
-					clearTimeout(blurTimeout.current);
-					blurTimeout.current = setTimeout(() => {
-						if (leavingField) {
-							handleLeave(typedValue);
-						} else {
-							handleBlur(typedValue);
-						}
-					});
+					if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) {
+						// Wait until focus has landed on the next field. Unmounting this
+						// editor mid-transfer makes the modal's focus trap (focus-trap >= 8.2)
+						// pull focus back to the start of the modal.
+						const typedValue = inputValue;
+						leaveTimeout.current = setTimeout(() => handleFocusLeaveField(typedValue));
+					}
 				}}
 			>
 				<div>
 					<input
+						ref={inputRef}
 						type="text"
 						name={field.name}
 						value={inputValue}
@@ -237,10 +224,11 @@ const EditMultiSelect = ({
 						<span className="multi-value" key={key}>
 							{item}
 							<ButtonLikeAnchor
-								// Keep out of the tab order so Tab goes to the next field
-								// (Backspace still removes values via keyboard).
-								tabIndex={-1}
-								onClick={() => removeItem(key)}
+								onClick={() => {
+									removeItem(key);
+									// The pressed button is about to unmount; keep focus in the field.
+									inputRef.current?.focus();
+								}}
 							>
 								<LuX />
 							</ButtonLikeAnchor>

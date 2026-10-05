@@ -132,9 +132,6 @@ export const useClickOutsideField = (
 		// 	childRef.current.addEventListener("blur", handleBlur, true); // capture phase
 		// }
 
-		// Keyboard exit is handled by the component's own onBlur (see
-		// RenderMultiField); a listener here can't tell Tab from a click.
-
 		// Adding event listener for detecting click outside
 		window.addEventListener("mousedown", handleClickOutside);
 
