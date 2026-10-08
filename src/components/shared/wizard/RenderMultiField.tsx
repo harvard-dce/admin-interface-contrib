@@ -1,4 +1,4 @@
-import React, { ReactNode, useRef, useState } from "react";
+import React, { ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import cn from "classnames";
 import { useClickOutsideField } from "../../../hooks/wizardHooks";
@@ -93,16 +93,13 @@ const RenderMultiField = ({
 		form.setFieldValue(field.name, fieldValue);
 	};
 
-	// Always points at the latest submitValue, so late callers (e.g. unmount
-	// cleanup) don't commit against a stale field value.
+	// Always points at the latest submitValue, so the unmount cleanup doesn't
+	// commit against a stale field value. Must be a layout effect: the child's
+	// unmount cleanup runs before this component's passive effects.
 	const submitValueRef = useRef(submitValue);
-	submitValueRef.current = submitValue;
-
-	// Commit the typed value and leave edit mode (keyboard exit).
-	const leaveEditMode = (typedValue: string) => {
-		submitValueRef.current(typedValue);
-		setEditMode(false);
-	};
+	useLayoutEffect(() => {
+		submitValueRef.current = submitValue;
+	});
 
 	return (
 		// Render editable field for multiple values depending on type of metadata field
@@ -120,8 +117,8 @@ const RenderMultiField = ({
 						handleChange={handleChange}
 						handleKeyDown={handleKeyDown}
 						// Route through the ref, not submitValue directly
-						handleBlur={input => submitValueRef.current(input)}
-						handleFocusLeaveField={leaveEditMode}
+						commitOnUnmount={input => submitValueRef.current(input)}
+						exitEditMode={() => setEditMode(false)}
 					/>
 				)}
 			</>
@@ -146,8 +143,8 @@ const EditMultiSelect = ({
 	collection,
 	handleKeyDown,
 	handleChange,
-	handleBlur,
-	handleFocusLeaveField,
+	commitOnUnmount,
+	exitEditMode,
 	inputValue,
 	removeItem,
 	field,
@@ -157,8 +154,8 @@ const EditMultiSelect = ({
 	collection: { [key: string]: unknown }[]
 	handleKeyDown: (event: React.KeyboardEvent) => void
 	handleChange: (event: React.ChangeEvent<HTMLInputElement>) => void
-	handleBlur: (refCurrent: string) => void
-	handleFocusLeaveField: (typedValue: string) => void
+	commitOnUnmount: (typedValue: string) => void
+	exitEditMode: () => void
 	inputValue: HTMLInputElement["value"]
 	removeItem: (key: number) => void
 	field: FieldProps["field"]
@@ -166,8 +163,8 @@ const EditMultiSelect = ({
 }) => {
 	const { t } = useTranslation();
 
-	// onBlur does not get called if a component unmounts for some reason
-	// Instead, we achieve the same effect with useEffect
+	// Commit the typed value whenever the editor unmounts, which covers every way
+	// of leaving it (tabbing out, clicking outside, closing the modal/wizard page).
 	const textRef = useRef(inputValue);
 	React.useEffect(() => {
 		textRef.current = inputValue;
@@ -177,7 +174,7 @@ const EditMultiSelect = ({
 	React.useEffect(() => {
 		return () => {
 			clearTimeout(leaveTimeout.current);
-			handleBlur(textRef.current);
+			commitOnUnmount(textRef.current);
 		};
 	// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
@@ -186,15 +183,14 @@ const EditMultiSelect = ({
 		<>
 			<div
 				ref={containerRef}
-				// Tabbing out: commit the typed value and leave edit mode. Clicks
-				// are handled by useClickOutsideField instead.
+				// Tabbing out: leave edit mode; the unmount cleanup commits the typed
+				// value. Clicks are handled by useClickOutsideField instead.
 				onBlur={e => {
 					if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) {
 						// Wait until focus has landed on the next field. Unmounting this
 						// editor mid-transfer makes the modal's focus trap (focus-trap >= 8.2)
 						// pull focus back to the start of the modal.
-						const typedValue = inputValue;
-						leaveTimeout.current = setTimeout(() => handleFocusLeaveField(typedValue));
+						leaveTimeout.current = setTimeout(exitEditMode);
 					}
 				}}
 			>
