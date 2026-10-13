@@ -116,6 +116,10 @@ const RenderMultiField = ({
 						removeItem={removeItem}
 						handleChange={handleChange}
 						handleKeyDown={handleKeyDown}
+						// Two separate handlers on purpose: exitEditMode is only one of the ways
+						// the editor unmounts (tab-out). Clicking outside (useClickOutsideField)
+						// and closing the modal/wizard page unmount it without calling it, so
+						// the commit lives in the unmount cleanup to cover all of them once.
 						// Route through the ref, not submitValue directly
 						commitOnUnmount={input => submitValueRef.current(input)}
 						exitEditMode={() => setEditMode(false)}
